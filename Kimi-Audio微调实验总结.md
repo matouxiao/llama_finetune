@@ -6,7 +6,7 @@
 
 ## 实验环境
 
-- **模型**: Kimi-Audio-7B-Instruct
+- **模型**: Kimi-Audio-7B
 - **框架**: LLaMAFactory
 - **微调方法**: LoRA (Low-Rank Adaptation)
 - **数据集大小**: 19 个音频文件
@@ -444,7 +444,6 @@ preprocessing_num_workers: 0
 ---
 
 **实验日期**: 2025-11-07  
-**实验人员**: [您的姓名]  
 **模型版本**: Kimi-Audio-7B-Instruct  
 **LLaMAFactory 版本**: 最新版本
 
