@@ -34,17 +34,27 @@ _default_log_level: "logging._Level" = logging.INFO
 class LoggerHandler(logging.Handler):
     r"""Redirect the logging output to the logging file for LLaMA Board."""
 
-    def __init__(self, output_dir: str) -> None:
+    def __init__(self, output_dir: Optional[str]) -> None:
         super().__init__()
         self._formatter = logging.Formatter(
             fmt="[%(levelname)s|%(asctime)s] %(filename)s:%(lineno)s >> %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
         self.setLevel(logging.INFO)
+        # Handle None or empty output_dir
+        if not output_dir:
+            output_dir = "."
+        # Ensure output_dir exists and is absolute path
+        output_dir = os.path.abspath(output_dir)
         os.makedirs(output_dir, exist_ok=True)
         self.running_log = os.path.join(output_dir, RUNNING_LOG)
-        if os.path.exists(self.running_log):
-            os.remove(self.running_log)
+        # Only remove if file exists
+        try:
+            if os.path.exists(self.running_log):
+                os.remove(self.running_log)
+        except (FileNotFoundError, OSError):
+            # File doesn't exist or can't be removed, that's fine
+            pass
 
         self.thread_pool = ThreadPoolExecutor(max_workers=1)
 
@@ -60,7 +70,8 @@ class LoggerHandler(logging.Handler):
         self.thread_pool.submit(self._write_log, log_entry)
 
     def close(self) -> None:
-        self.thread_pool.shutdown(wait=True)
+        if hasattr(self, "thread_pool") and self.thread_pool is not None:
+            self.thread_pool.shutdown(wait=True)
         return super().close()
 
 

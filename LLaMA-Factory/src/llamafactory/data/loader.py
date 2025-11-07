@@ -128,18 +128,25 @@ def _load_single_dataset(
     elif dataset_attr.load_from == "cloud_file":
         dataset = Dataset.from_list(read_cloud_json(data_path), split=dataset_attr.split)
     else:
-        dataset = load_dataset(
-            path=data_path,
-            name=data_name,
-            data_dir=data_dir,
-            data_files=data_files,
-            split=dataset_attr.split,
-            cache_dir=model_args.cache_dir,
-            token=model_args.hf_hub_token,
-            num_proc=data_args.preprocessing_num_workers,
-            trust_remote_code=model_args.trust_remote_code,
-            streaming=data_args.streaming and dataset_attr.load_from != "file",
-        )
+        # For local files, don't use trust_remote_code to avoid warnings
+        load_kwargs = {
+            "path": data_path,
+            "name": data_name,
+            "data_dir": data_dir,
+            "data_files": data_files,
+            "split": dataset_attr.split,
+            "cache_dir": model_args.cache_dir,
+            "token": model_args.hf_hub_token,
+            "streaming": data_args.streaming and dataset_attr.load_from != "file",
+        }
+        # Only add num_proc if > 0 (datasets library may require num_proc > 0)
+        if data_args.preprocessing_num_workers > 0:
+            load_kwargs["num_proc"] = data_args.preprocessing_num_workers
+        # Only use trust_remote_code for remote datasets, not local files
+        if dataset_attr.load_from not in ["file", "script"]:
+            load_kwargs["trust_remote_code"] = model_args.trust_remote_code
+        
+        dataset = load_dataset(**load_kwargs)
         if data_args.streaming and dataset_attr.load_from == "file":
             dataset = dataset.to_iterable_dataset(num_shards=training_args.dataloader_num_workers)
 
@@ -248,10 +255,12 @@ def _get_preprocessed_dataset(
     kwargs = {}
     if not data_args.streaming:
         kwargs = dict(
-            num_proc=data_args.preprocessing_num_workers,
             load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
             desc="Running tokenizer on dataset",
         )
+        # Only add num_proc if > 0 (datasets library requires num_proc > 0)
+        if data_args.preprocessing_num_workers > 0:
+            kwargs["num_proc"] = data_args.preprocessing_num_workers
 
     dataset = dataset.map(
         dataset_processor.preprocess_dataset,

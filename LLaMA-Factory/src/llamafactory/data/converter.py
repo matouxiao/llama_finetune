@@ -411,10 +411,12 @@ def align_dataset(
     kwargs = {}
     if not data_args.streaming:
         kwargs = dict(
-            num_proc=data_args.preprocessing_num_workers,
             load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
             desc="Converting format of dataset",
         )
+        # Only add num_proc if > 0 (datasets library requires num_proc > 0)
+        if data_args.preprocessing_num_workers > 0:
+            kwargs["num_proc"] = data_args.preprocessing_num_workers
 
     dataset_converter = get_dataset_converter(dataset_attr.formatting, dataset_attr, data_args)
     return dataset.map(

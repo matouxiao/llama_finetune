@@ -196,7 +196,37 @@ def patch_target_modules(
 
         return module_names
     else:
-        return target_modules
+        # For non-composite models, ensure we only match Linear layers
+        # This is important for custom models like Kimi-Audio that have custom layer classes
+        # PEFT requires full module paths, not just module name suffixes
+        module_names = []
+        for name, module in model.named_modules():
+            # Only match if:
+            # 1. The module is a Linear layer (or Conv1D)
+            # 2. The target_module matches the last part of the module name
+            if "Linear" in module.__class__.__name__ or "Conv1D" in module.__class__.__name__:
+                module_last_part = name.split(".")[-1]
+                if any(target_module == module_last_part for target_module in target_modules):
+                    module_names.append(name)
+        
+        # Always return the matched module paths (even if empty)
+        # This ensures PEFT receives full paths instead of partial names
+        # If no matches found and target_modules contains valid module names,
+        # it means the model structure doesn't match expectations
+        if len(module_names) > 0:
+            return module_names
+        elif len(target_modules) > 0 and target_modules[0] != "all":
+            # If we have specific target_modules but no matches, log a warning
+            # but still return empty list to let PEFT handle the error
+            logger.warning_rank0(
+                f"No Linear modules found matching target_modules {target_modules}. "
+                "This may cause PEFT to fail. Please check your lora_target configuration."
+            )
+            return []
+        else:
+            # Fallback: return original target_modules for backward compatibility
+            # This handles edge cases where target_modules might be special values
+            return target_modules
 
 
 _register_composite_model(

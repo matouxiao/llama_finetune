@@ -2200,3 +2200,22 @@ register_template(
     format_user=StringFormatter(slots=["<human>:{{content}}\n<bot>:"]),
     format_assistant=StringFormatter(slots=["{{content}}\n"]),
 )
+
+
+register_template(
+    name="kimi_audio",
+    format_user=StringFormatter(
+        slots=["<|im_user_msg_start|>{{content}}<|im_msg_end|><|im_assistant_msg_start|>"]
+    ),
+    format_assistant=StringFormatter(slots=["{{content}}<|im_msg_end|>"]),
+    format_system=StringFormatter(slots=["<|im_user_msg_start|>{{content}}<|im_msg_end|>"]),
+    default_system="You are a helpful assistant provided by Moonshot-AI.",
+    stop_words=["<|im_msg_end|>"],
+    replace_eos=True,
+    mm_plugin=get_mm_plugin(
+        name="kimi_audio",
+        audio_token="<|im_media_begin|>",
+        audio_bos_token="<|im_media_begin|>",
+        audio_eos_token="<|im_media_end|>",
+    ),
+)

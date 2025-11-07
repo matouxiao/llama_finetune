@@ -402,8 +402,41 @@ def get_train_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> _
         and training_args.ddp_find_unused_parameters is None
         and finetuning_args.finetuning_type == "lora"
     ):
-        logger.info_rank0("Set `ddp_find_unused_parameters` to False in DDP training since LoRA is enabled.")
-        training_args.ddp_find_unused_parameters = False
+        # For Kimi-Audio model, some parameters (like audio_logits) may not be used in loss calculation
+        # So we need to enable find_unused_parameters for DDP
+        model_type = getattr(model_args, "model_type", None)
+        if model_type is None and model_args.model_name_or_path:
+            try:
+                from transformers import AutoConfig
+                config = AutoConfig.from_pretrained(
+                    model_args.model_name_or_path,
+                    trust_remote_code=model_args.trust_remote_code,
+                )
+                model_type = getattr(config, "model_type", None)
+            except Exception:
+                pass
+        
+        # Check if it's Kimi-Audio model (has KimiAudioConfig or MoonshotKimiaForCausalLM)
+        is_kimi_audio = False
+        if model_args.model_name_or_path:
+            model_path = model_args.model_name_or_path
+            if os.path.exists(os.path.join(model_path, "config.json")):
+                try:
+                    import json
+                    with open(os.path.join(model_path, "config.json"), "r") as f:
+                        config_data = json.load(f)
+                        architectures = config_data.get("architectures", [])
+                        if "KimiAudioModel" in architectures or "MoonshotKimiaForCausalLM" in architectures:
+                            is_kimi_audio = True
+                except Exception:
+                    pass
+        
+        if is_kimi_audio:
+            logger.info_rank0("Kimi-Audio model detected. Setting `ddp_find_unused_parameters` to True for DDP training.")
+            training_args.ddp_find_unused_parameters = True
+        else:
+            logger.info_rank0("Set `ddp_find_unused_parameters` to False in DDP training since LoRA is enabled.")
+            training_args.ddp_find_unused_parameters = False
 
     if finetuning_args.stage in ["rm", "ppo"] and finetuning_args.finetuning_type in ["full", "freeze"]:
         can_resume_from_checkpoint = False

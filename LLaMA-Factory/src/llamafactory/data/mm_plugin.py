@@ -1415,6 +1415,137 @@ class Qwen2AudioPlugin(BasePlugin):
 
 
 @dataclass
+class KimiAudioPlugin(BasePlugin):
+    r"""Plugin for Kimi-Audio model."""
+    audio_bos_token: str = "<|im_media_begin|>"
+    audio_eos_token: str = "<|im_media_end|>"
+    
+    @override
+    def _validate_input(
+        self,
+        processor: Optional["MMProcessor"],
+        images: list["ImageInput"],
+        videos: list["VideoInput"],
+        audios: list["AudioInput"],
+    ) -> None:
+        r"""Validate input for Kimi-Audio model (skip feature_extractor check)."""
+        # Kimi-Audio uses custom audio processing (Whisper + GLM4 tokenizer)
+        # so we skip the standard feature_extractor validation
+        if len(images) != 0 and self.image_token is None:
+            raise ValueError(
+                "This model does not support image input. Please check whether the correct `template` is used."
+            )
+
+        if len(videos) != 0 and self.video_token is None:
+            raise ValueError(
+                "This model does not support video input. Please check whether the correct `template` is used."
+            )
+
+        if len(audios) != 0 and self.audio_token is None:
+            raise ValueError(
+                "This model does not support audio input. Please check whether the correct `template` is used."
+            )
+
+        # Skip processor and feature_extractor validation for Kimi-Audio
+        # as it uses custom audio processing (Whisper encoder + GLM4 tokenizer)
+    
+    @override
+    def process_messages(
+        self,
+        messages: list[dict[str, str]],
+        images: list["ImageInput"],
+        videos: list["VideoInput"],
+        audios: list["AudioInput"],
+        processor: Optional["MMProcessor"],
+    ) -> list[dict[str, str]]:
+        r"""Process messages for Kimi-Audio format."""
+        self._validate_input(processor, images, videos, audios)
+        self._validate_messages(messages, images, videos, audios)
+        messages = deepcopy(messages)
+        
+        # Kimi-Audio uses <|im_media_begin|> and <|im_media_end|> tokens
+        # Replace AUDIO_PLACEHOLDER with the appropriate tokens
+        for message in messages:
+            content = message["content"]
+            while AUDIO_PLACEHOLDER in content:
+                # Use processor's tokens if available, otherwise use plugin's defaults
+                bos_token = getattr(processor, "audio_bos_token", self.audio_bos_token) if processor else self.audio_bos_token
+                eos_token = getattr(processor, "audio_eos_token", self.audio_eos_token) if processor else self.audio_eos_token
+                audio_token = self.audio_token or "<|im_media_begin|>"
+                
+                # For Kimi-Audio, we don't expand tokens based on audio length
+                # since it uses custom processing (Whisper + GLM4 tokenizer)
+                # The model will handle audio processing internally
+                audio_seqlen = 1
+                
+                content = content.replace(
+                    AUDIO_PLACEHOLDER, f"{bos_token}{audio_token * audio_seqlen}{eos_token}", 1
+                )
+            
+            message["content"] = content
+        
+        return messages
+    
+    @override
+    def _get_mm_inputs(
+        self,
+        images: list["ImageInput"],
+        videos: list["VideoInput"],
+        audios: list["AudioInput"],
+        processor: Optional["MMProcessor"],
+    ) -> dict[str, "torch.Tensor"]:
+        r"""Get multimodal inputs for Kimi-Audio model.
+        
+        Kimi-Audio uses custom audio processing (Whisper encoder + GLM4 tokenizer).
+        Audio processing is handled internally by the model based on audio tokens in input_ids.
+        We don't need to pass audio features here - the model will extract them from audio files
+        referenced in the input_ids when it sees audio special tokens.
+        """
+        mm_inputs = {}
+        
+        # Process images if any
+        if len(images) != 0:
+            image_processor: BaseImageProcessor = getattr(processor, "image_processor", None)
+            if image_processor is None:
+                raise ValueError("Image processor not found for image input.")
+            images = self._regularize_images(
+                images,
+                image_max_pixels=getattr(processor, "image_max_pixels", 768 * 768),
+                image_min_pixels=getattr(processor, "image_min_pixels", 32 * 32),
+            )["images"]
+            mm_inputs.update(image_processor(images, return_tensors="pt"))
+        
+        # Process videos if any
+        if len(videos) != 0:
+            video_processor: BaseVideoProcessor = getattr(processor, "video_processor", None)
+            if video_processor is None:
+                raise ValueError("Video processor not found for video input.")
+            videos = self._regularize_videos(
+                videos,
+                video_max_pixels=getattr(processor, "video_max_pixels", 768 * 768),
+                video_min_pixels=getattr(processor, "video_min_pixels", 32 * 32),
+                video_fps=getattr(processor, "video_fps", 2.0),
+            )["videos"]
+            mm_inputs.update(video_processor(videos, return_tensors="pt"))
+        
+        # For Kimi-Audio, audio is processed by the model internally
+        # The audio file paths are already embedded in the input_ids as special tokens
+        # The model's forward method will extract whisper features from audio files
+        # when it encounters audio special tokens (<|im_media_begin|> and <|im_media_end|>)
+        # So we don't need to pass any audio-related inputs here
+        # Just validate that audios exist if audio_token is set
+        if len(audios) != 0:
+            # Regularize audio paths to ensure they exist (validation only)
+            self._regularize_audios(
+                audios,
+                sampling_rate=getattr(processor, "audio_sampling_rate", 16000),
+            )
+            # Don't add audio to mm_inputs - model will handle it internally
+        
+        return mm_inputs
+
+
+@dataclass
 class Qwen2VLPlugin(BasePlugin):
     vision_bos_token: str = "<|vision_start|>"
     vision_eos_token: str = "<|vision_end|>"
@@ -2034,6 +2165,7 @@ PLUGINS = {
     "glm4v": GLM4VPlugin,
     "gemma3n": Gemma3nPlugin,
     "intern_vl": InternVLPlugin,
+    "kimi_audio": KimiAudioPlugin,
     "kimi_vl": KimiVLPlugin,
     "llama4": Llama4Plugin,
     "llava": LlavaPlugin,

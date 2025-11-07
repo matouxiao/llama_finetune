@@ -159,17 +159,36 @@ def patch_model(
     add_valuehead: bool,
 ) -> None:
     gen_config = model.generation_config  # check and fix generation config
-    if not gen_config.do_sample and (
+    if gen_config is not None and not gen_config.do_sample and (
         (gen_config.temperature is not None and gen_config.temperature != 1.0)
         or (gen_config.top_p is not None and gen_config.top_p != 1.0)
         or (gen_config.typical_p is not None and gen_config.typical_p != 1.0)
     ):
         gen_config.do_sample = True
 
-    if getattr(model.config, "model_type", None) not in ["minicpmv", "minicpmo"] and "GenerationMixin" not in str(
-        model.generate.__func__
-    ):
-        model.generate = MethodType(GenerationMixin.generate, model)
+    if getattr(model.config, "model_type", None) not in ["minicpmv", "minicpmo"]:
+        # Add generate method if missing or replace if not from GenerationMixin
+        try:
+            if hasattr(model, "generate") and callable(getattr(model, "generate", None)):
+                generate_method = getattr(model, "generate", None)
+                if generate_method is not None and "GenerationMixin" not in str(getattr(generate_method, "__func__", None)):
+                    model.generate = MethodType(GenerationMixin.generate, model)
+                    logger.info_rank0("Replaced generate method with GenerationMixin.generate.")
+            elif not hasattr(model, "generate"):
+                # Add generate method if missing (needed for models like Kimi-Audio)
+                model.generate = MethodType(GenerationMixin.generate, model)
+                logger.info_rank0("Added generate method to model.")
+        except (AttributeError, TypeError) as e:
+            logger.warning_rank0(f"Could not add/replace generate method: {e}")
+        
+        # Add prepare_inputs_for_generation if missing (required by PEFT)
+        # This is needed for models like Kimi-Audio that don't inherit from GenerationMixin
+        if not hasattr(model, "prepare_inputs_for_generation"):
+            try:
+                model.prepare_inputs_for_generation = MethodType(GenerationMixin.prepare_inputs_for_generation, model)
+                logger.info_rank0("Added prepare_inputs_for_generation method to model.")
+            except (AttributeError, TypeError) as e:
+                logger.warning_rank0(f"Could not add prepare_inputs_for_generation method: {e}")
 
     if add_valuehead:
         prepare_valuehead_model(model)
